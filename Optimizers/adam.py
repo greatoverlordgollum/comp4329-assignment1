@@ -60,17 +60,17 @@ class Adam(Optimizer):
                     state["exp_avg"] = torch.zeros_like(p)  # 1st moment (mean)
                     state["exp_avg_sq"] = torch.zeros_like(p)  # 2nd moment (variance)
 
-                m, v = state["m"], state["v"]
+                m, v = state["exp_avg"], state["exp_avg_sq"]
                 state["step"] += 1
                 t = state["step"]
 
                 # Update biased moment estimates
                 m.mul_(beta1).add_(grad, alpha=1.0 - beta1)
-                v.mul_(beta2).add_(grad, alpha=1.0 - beta2)
+                v.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
 
                 # Bias correction
-                bias_correction1 = 1.0 - beta1 * t
-                bias_correction2 = 1.0 - beta2 * t
+                bias_correction1 = 1.0 - beta1 ** t
+                bias_correction2 = 1.0 - beta2 ** t
                 m_hat = m / bias_correction1
                 v_hat = v / bias_correction2
 

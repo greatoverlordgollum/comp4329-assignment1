@@ -14,10 +14,12 @@ Individual steps:
 """
 
 import os
+import ssl
 import subprocess
 import sys
 import urllib.request
 import zipfile
+from urllib.error import URLError
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +30,42 @@ MINI_DATA_URL = (
     "https://github.com/usyddeeplearning/Assignment1--2026/releases/download/data-v1.00/mini_data.zip"
 )
 
+_SSL_OPENER_CONFIGURED = False
+
+
+def _ensure_ssl_opener() -> None:
+    """Configure urllib to use certifi's CA bundle when available."""
+    global _SSL_OPENER_CONFIGURED
+    if _SSL_OPENER_CONFIGURED:
+        return
+
+    try:
+        import certifi
+    except ImportError:
+        _SSL_OPENER_CONFIGURED = True
+        return
+
+    context = ssl.create_default_context(cafile=certifi.where())
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context))
+    urllib.request.install_opener(opener)
+    _SSL_OPENER_CONFIGURED = True
+
+
+def _urlretrieve(url: str, dest: str, reporthook=None) -> None:
+    """Wrapper around urllib.request.urlretrieve with actionable SSL errors."""
+    try:
+        urllib.request.urlretrieve(url, dest, reporthook=reporthook)
+    except URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            raise RuntimeError(
+                "SSL certificate verification failed while downloading data. "
+                "On macOS, install certificates and retry: "
+                "open '/Applications/Python 3.x/Install Certificates.command' "
+                "(matching your Python version). "
+                "If using a virtual environment, also install certifi: pip install certifi."
+            ) from exc
+        raise
+
 
 # ---------------------------------------------------------------------------
 # Internal helper
@@ -36,6 +74,7 @@ MINI_DATA_URL = (
 def _download_file(url: str, dest: str) -> None:
     """Download *url* to *dest*, creating parent directories as needed."""
     os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+    _ensure_ssl_opener()
     try:
         from tqdm import tqdm
 
@@ -57,12 +96,12 @@ def _download_file(url: str, dest: str) -> None:
                     self._t.close()
 
         hook = _Hook()
-        urllib.request.urlretrieve(url, dest, reporthook=hook)
+        _urlretrieve(url, dest, reporthook=hook)
         hook.close()
 
     except ImportError:
         print(f"Downloading {os.path.basename(dest)} …")
-        urllib.request.urlretrieve(url, dest)
+        _urlretrieve(url, dest)
         print(f"  Saved → {dest}")
 
 
@@ -172,7 +211,7 @@ def download_mini(
     print("Mini dataset download complete.")
 
 
-def download_spacy_model(model: str = "en") -> None:
+def download_spacy_model(model: str = "en_core_web_sm") -> None:
     """Download the spaCy language model required for tokenisation.
 
     Parameters
@@ -185,6 +224,11 @@ def download_spacy_model(model: str = "en") -> None:
         [sys.executable, "-m", "spacy", "download", model],
         capture_output=True, text=True,
     )
+    if result.returncode != 0 and model == "en":
+        result = subprocess.run(
+            [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
+            capture_output=True, text=True,
+        )
     if result.returncode != 0:
         print(result.stderr)
         raise RuntimeError(

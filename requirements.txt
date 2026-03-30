@@ -6,3 +6,4 @@ msgpack-numpy
 tqdm
 ujson
 tensorboard
+certifi
