@@ -39,7 +39,7 @@ class PosEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         length = x.size(-1)
-        return x + self.pos_encoding[:, :length]
+        return x + self.pos_encoding[:, :length].detach()
 
 
 class MultiHeadAttention(nn.Module):
@@ -72,9 +72,16 @@ class MultiHeadAttention(nn.Module):
 
         if mask.dtype != torch.bool:
             mask = mask.bool()
-        attn_mask = mask.unsqueeze(1).expand(-1, length, -1).repeat(self.num_heads, 1, 1)  # [B*h, L, L]
+        # Keep mask row order aligned with q/k/v flattening order [b0h0, b0h1, ..., b1h0, ...].
+        attn_mask = (
+            mask.unsqueeze(1)
+            .unsqueeze(2)
+            .expand(batch_size, self.num_heads, length, length)
+            .reshape(batch_size * self.num_heads, length, length)
+        )  # [B*h, L, L]
 
-        attn = torch.bmm(q, k.transpose(1, 2))
+        # Scaled dot-product attention stabilizes softmax as d_k grows.
+        attn = torch.bmm(q, k.transpose(1, 2)) * self.scale
         attn = mask_logits(attn, attn_mask)
         attn = F.softmax(attn, dim=2)
         attn = self.drop(attn)
@@ -113,19 +120,18 @@ class EncoderBlock(nn.Module):
         for i, conv in enumerate(self.convs):
             out = conv(out)
             out = self.act(out)
-            out = out + res
             if (i + 1) % 2 == 0:
                 out = self.conv_drops[i](out)
+            out = out + res
             res = out
             out = self.norms[i](out)
 
         out = self.self_att(out, mask) + res
-        out = self.drop(out)
-
         res = out
         out = self.norme(out)
+        
         out = self.fc(out.transpose(1, 2)).transpose(1, 2)
         out = self.act(out)
-        out = out + res
         out = self.drop(out)
+        out = out + res
         return out

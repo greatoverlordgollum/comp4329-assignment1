@@ -40,6 +40,7 @@ def train(
 
     # ── Training loop ─────────────────────────────────────────────────────────
     batch_size:         int   = 8,
+    accumulate_grad_steps: int = 4,
     num_steps:          int   = 60000,
     checkpoint:         int   = 200,
     val_num_batches:    int   = 150,
@@ -66,10 +67,12 @@ def train(
     # ── Scheduler hyperparameters ─────────────────────────────────────────────
     lr_step_size:       int   = 10000,  # step: decay every n steps
     lr_gamma:           float = 0.5,    # step: multiplicative decay factor
+    warmup_steps:       int   = 1000,   # linear warmup steps (used for adam+none)
 
     # ── Model architecture ────────────────────────────────────────────────────
     para_limit:         int   = 400,
     ques_limit:         int   = 50,
+    max_answer_len:     int   = 30,
     char_limit:         int   = 16,
     d_model:            int   = 96,
     num_heads:          int   = 8,
@@ -138,13 +141,33 @@ def train(
     if norm_name not in normalizations:
         raise ValueError(f"Unknown norm '{norm_name}'. Available: {list(normalizations.keys())}")
 
-    params    = (p for p in model.parameters() if p.requires_grad)
-    optimizer = optimizers[optimizer_name](params, args)
+    # Apply weight decay only to matrix/tensor weights; exclude biases and
+    # normalization parameters which are typically harmed by L2 regularization.
+    decay_params = []
+    no_decay_params = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if p.ndim == 1 or name.endswith("bias") or "norm" in name.lower():
+            no_decay_params.append(p)
+        else:
+            decay_params.append(p)
+
+    param_groups = [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+    optimizer = optimizers[optimizer_name](param_groups, args)
     scheduler = schedulers[scheduler_name](optimizer, args)
     loss_fn   = losses[loss_name]
 
-    best_f1  = 0.0
-    best_em  = 0.0
+    # Persist the intended base LR per param-group so warmup remains consistent
+    # across checkpoint blocks.
+    for group in optimizer.param_groups:
+        group.setdefault("base_lr", group["lr"])
+
+    best_f1  = -1.0
+    best_em  = -1.0
     patience = 0
     history  = []
 
@@ -155,25 +178,33 @@ def train(
             model, optimizer, scheduler, _train_iter,
             steps_this_block, grad_clip, loss_fn, DEVICE,
             global_step=step0,
+            warmup_steps=warmup_steps if optimizer_name == "adam" else 0,
+            accumulate_grad_steps=accumulate_grad_steps,
         )
 
-        tr_metrics, _ = run_eval(
-            model, train_dataset, train_eval,
-            num_batches=val_num_batches, batch_size=batch_size,
-            use_random_batches=True,
-            device=DEVICE, loss_fn=loss_fn,
-        )
-        print("VALID(train) loss {loss:8f}  F1 {f1:8f}  EM {exact_match:8f}\n".format(**tr_metrics))
+        if val_num_batches > 0:
+            tr_metrics, _ = run_eval(
+                model, train_dataset, train_eval,
+                num_batches=val_num_batches, batch_size=batch_size,
+                use_random_batches=True,
+                device=DEVICE, loss_fn=loss_fn,
+                max_answer_len=max_answer_len,
+            )
+            print("VALID(train) loss {loss:8f}  F1 {f1:8f}  EM {exact_match:8f}\n".format(**tr_metrics))
+        else:
+            tr_metrics = {"loss": float("nan"), "f1": float("nan"), "exact_match": float("nan")}
+            print("VALID(train) skipped (val_num_batches <= 0)\n")
 
         dv_metrics, ans = run_eval(
             model, dev_dataset, dev_eval,
             num_batches=test_num_batches, batch_size=batch_size,
             use_random_batches=False,
             device=DEVICE, loss_fn=loss_fn,
+            max_answer_len=max_answer_len,
         )
         print("TEST        loss {loss:8f}  F1 {f1:8f}  EM {exact_match:8f}\n".format(**dv_metrics))
 
-        current_lr = scheduler.get_last_lr()
+        current_lr = [pg["lr"] for pg in optimizer.param_groups]
         print("Learning rate:", current_lr)
 
         history.append({
@@ -190,20 +221,21 @@ def train(
         dev_f1 = dv_metrics["f1"]
         dev_em = dv_metrics["exact_match"]
 
-        if dev_f1 < best_f1 and dev_em < best_em:
+        improved = (dev_f1 > best_f1) or (dev_f1 == best_f1 and dev_em > best_em)
+        if improved:
+            patience = 0
+            best_f1 = dev_f1
+            best_em = dev_em
+            save_checkpoint(
+                save_dir, ckpt_name, model, optimizer, scheduler,
+                step0 + steps_this_block, best_f1, best_em, vars(args),
+            )
+            print(f"Checkpoint updated at step {step0 + steps_this_block} (F1={best_f1:.4f}, EM={best_em:.4f})")
+        else:
             patience += 1
             if patience > early_stop:
                 print("Early stopping triggered.")
                 break
-        else:
-            patience = 0
-            best_f1  = max(best_f1, dev_f1)
-            best_em  = max(best_em, dev_em)
-
-        save_checkpoint(
-            save_dir, ckpt_name, model, optimizer, scheduler,
-            step0 + steps_this_block, best_f1, best_em, vars(args),
-        )
 
         with open(os.path.join(log_dir, "answers.json"), "w") as f:
             json.dump(ans, f)

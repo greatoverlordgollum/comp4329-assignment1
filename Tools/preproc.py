@@ -164,11 +164,24 @@ def build_features(examples, data_type: str, out_file: str,
                    ans_limit: int, char_limit: int):
     """Vectorise examples into padded index arrays and save as .npz."""
 
+    def choose_answer_span(ex):
+        # Pick a single canonical supervision span to avoid inconsistent
+        # train targets when multiple annotations exist.
+        spans = list(zip(ex["y1s"], ex["y2s"]))
+        if not spans:
+            return None
+        # Prefer shortest span (then earliest start) for stable supervision.
+        return min(spans, key=lambda t: ((t[1] - t[0] + 1), t[0]))
+
     def filter_func(ex):
+        chosen = choose_answer_span(ex)
+        if chosen is None:
+            return True
+        y1, y2 = chosen
         return (
             len(ex["context_tokens"]) > para_limit
             or len(ex["ques_tokens"]) > ques_limit
-            or (ex["y2s"][0] - ex["y1s"][0]) > ans_limit
+            or (y2 - y1 + 1) > ans_limit
         )
 
     def get_word(word):
@@ -188,9 +201,13 @@ def build_features(examples, data_type: str, out_file: str,
 
     for example in tqdm(examples):
         total_all += 1
+        chosen = choose_answer_span(example)
+        if chosen is None:
+            continue
         if filter_func(example):
             continue
         total += 1
+        y1, y2 = chosen
 
         ctx_idx = np.zeros([para_limit], dtype=np.int32)
         ctx_char_idx = np.zeros([para_limit, char_limit], dtype=np.int32)
@@ -212,8 +229,8 @@ def build_features(examples, data_type: str, out_file: str,
         context_char_idxs.append(ctx_char_idx)
         ques_idxs.append(q_idx)
         ques_char_idxs.append(q_char_idx)
-        y1s.append(example["y1s"][-1])
-        y2s.append(example["y2s"][-1])
+        y1s.append(y1)
+        y2s.append(y2)
         ids.append(example["id"])
 
     ensure_parent(out_file)

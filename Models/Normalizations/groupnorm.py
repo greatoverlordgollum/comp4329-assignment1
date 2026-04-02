@@ -32,7 +32,7 @@ class GroupNorm(nn.Module):
         spatial = x.shape[2:]  # e.g. (L,) or (H, W)
 
         # Reshape to [B, G, C//G, *spatial] to isolate groups
-        x = x.view(B, self.G, C // self.G, *spatial)
+        x = x.reshape(B, self.G, C // self.G, *spatial)
 
         # Normalize over (C//G, *spatial) dims, i.e. everything from dim=2 onward
         dims = tuple(range(2, x.ndim))
@@ -41,7 +41,7 @@ class GroupNorm(nn.Module):
         x = (x - mean) / torch.sqrt(var + self.eps)
 
         # Restore to [B, C, *spatial]
-        x = x.view(B, C, *spatial)
+        x = x.reshape(B, C, *spatial)
 
         # Apply affine transform: broadcast weight/bias [C] → [1, C, 1, ...]
         affine_shape = (1, C) + (1,) * len(spatial)

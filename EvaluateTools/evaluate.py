@@ -40,6 +40,7 @@ def evaluate(
     batch_size:         int   = 8,
     test_num_batches:   int   = -1,       # -1 = full dev set
     loss_name:          str   = "qa_nll",
+    max_answer_len:     int   = 30,
 
     # ── Model architecture (must match the checkpoint) ────────────────────────
     para_limit:     int   = 400,
@@ -126,10 +127,14 @@ def evaluate(
         use_random_batches=False,
         device=DEVICE,
         loss_fn=losses[loss_name],
+        max_answer_len=max_answer_len,
     )
 
     with open(os.path.join(log_dir, "answers.json"), "w") as f:
         json.dump(ans, f)
 
-    print("TEST  loss {loss:.6f}  F1 {f1:.6f}  EM {exact_match:.6f}".format(**metrics))
+    print(
+        "TEST  loss {loss:.6f}  F1 {f1:.6f}  EM {exact_match:.6f}  "
+        "(exact {exact_match_count}/{total_count})".format(**metrics)
+    )
     return {"f1": metrics["f1"], "exact_match": metrics["exact_match"], "loss": metrics["loss"]}

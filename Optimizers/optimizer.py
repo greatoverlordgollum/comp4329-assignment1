@@ -5,15 +5,13 @@ from Optimizers.sgd_momentum import SGDMomentum
 
 # ── Optimizer factories ──────────────────────────────────────────────────────
 #
-# NOTE: `adam` sets lr=1.0 because its learning rate is entirely controlled by
-# the paired `warmup_lambda` scheduler (which outputs the actual lr values).
-# `sgd` and `sgd_momentum` use args.learning_rate directly and should be
-# paired with `cosine` or `step` schedulers.
+# NOTE: All optimizers read args.learning_rate directly. Schedulers then
+# transform that base LR over time.
 
 def adam(params, args):
     return Adam(
         params=params,
-        lr=1.0,
+        lr=args.learning_rate,
         betas=(args.beta1, args.beta2),
         eps=getattr(args, "eps", 1e-7),
         weight_decay=args.weight_decay,

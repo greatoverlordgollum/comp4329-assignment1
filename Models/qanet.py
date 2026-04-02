@@ -40,21 +40,33 @@ class QANet(nn.Module):
         )
         self.word_emb = nn.Embedding.from_pretrained(
             torch.tensor(word_mat, dtype=torch.float32),
-            freeze=False
+            freeze=getattr(args, "freeze_word", True)  # QANet typically freezes GloVe
         )
 
         self.emb = Embedding(d_word, d_char, dropout, dropout_char, init_name=init_name, act_name=act_name)
-        self.context_conv = DepthwiseSeparableConv(d_word + d_char, d_model, 5, init_name=init_name)
-        self.question_conv = DepthwiseSeparableConv(d_word + d_char, d_model, 5, init_name=init_name)
+        # Context and Question encoders MUST share weights to map to the identical semantic space
+        from .conv import Conv1d
+        from .Initializations import initializations, constant_
+        
+        self.conv = Conv1d(d_word + d_char, d_model, 1)
+        initializations[init_name](self.conv.weight)
+        if self.conv.bias is not None:
+            constant_(self.conv.bias, 0.0)
 
-        self.c_emb_enc = EncoderBlock(d_model, num_heads, dropout, conv_num=4, k=7, length=len_c, init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
-        self.q_emb_enc = EncoderBlock(d_model, num_heads, dropout, conv_num=4, k=7, length=len_q, init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
+        self.emb_enc = EncoderBlock(d_model, num_heads, dropout, conv_num=4, k=7, length=max(len_c, len_q), init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
 
         self.cq_att = CQAttention(d_model, dropout)
-        self.cq_resizer = DepthwiseSeparableConv(d_model * 4, d_model, 5, init_name=init_name)
+        
+        self.cq_resizer = Conv1d(d_model * 4, d_model, 1)
+        initializations[init_name](self.cq_resizer.weight)
+        if self.cq_resizer.bias is not None:
+            constant_(self.cq_resizer.bias, 0.0)
 
-        base_enc = EncoderBlock(d_model, num_heads, dropout, conv_num=2, k=5, length=len_c, init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
-        self.model_enc_blks = nn.ModuleList([copy.deepcopy(base_enc) for _ in range(7)])
+        self.model_enc_blks = nn.ModuleList([
+            EncoderBlock(d_model, num_heads, dropout, conv_num=2, k=5, length=len_c, 
+                         init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
+            for _ in range(7)
+        ])
 
         self.out = Pointer(d_model)
 
@@ -66,11 +78,11 @@ class QANet(nn.Module):
         Qw, Qc = self.word_emb(Qwid), self.char_emb(Qcid)
 
         C, Q = self.emb(Cc, Cw), self.emb(Qc, Qw)
-        C = self.context_conv(C)
-        Q = self.question_conv(Q)
+        C = self.conv(C)
+        Q = self.conv(Q)
 
-        Ce = self.c_emb_enc(C, cmask)
-        Qe = self.q_emb_enc(Q, qmask)
+        Ce = self.emb_enc(C, cmask)
+        Qe = self.emb_enc(Q, qmask)
 
         X = self.cq_att(Ce, Qe, cmask, qmask)
 

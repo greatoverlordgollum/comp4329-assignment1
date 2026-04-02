@@ -50,7 +50,7 @@ class Adam(Optimizer):
 
                 # Weight decay
                 if wd != 0.0:
-                    grad = grad.add(p, alpha=-wd)
+                    grad = grad.add(p, alpha=wd)
 
                 state = self.state[p]
 
@@ -74,6 +74,6 @@ class Adam(Optimizer):
                 m_hat = m / bias_correction1
                 v_hat = v / bias_correction2
 
-                p.addcdiv_(m_hat, v_hat.sqrt().add_(eps), value=-lr)
+                p.addcdiv_(m_hat, v_hat.add(eps).sqrt_(), value=-lr)
 
         return loss

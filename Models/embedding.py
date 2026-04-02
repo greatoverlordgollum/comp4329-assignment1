@@ -29,18 +29,21 @@ class Embedding(nn.Module):
         super().__init__()
         self.drop = Dropout(dropout)
         self.drop_char = Dropout(dropout_char)
-        self.conv2d = DepthwiseSeparableConv(d_char, d_char, 5, dim=2, init_name=init_name)
+        # Character CNN should convolve within each token's character axis only.
+        self.char_conv = DepthwiseSeparableConv(d_char, d_char, 5, dim=1, init_name=init_name)
         self.high = Highway(2, d_word + d_char, act_name=act_name)
         self.act = get_activation(act_name)
 
     def forward(self, ch_emb: torch.Tensor, wd_emb: torch.Tensor) -> torch.Tensor:
         # ch_emb: [B, L, char_len, d_char]
         # wd_emb: [B, L, d_word]
-        ch_emb = ch_emb.permute(0, 3, 1, 2)  # [B, d_char, L, char_len]
+        B, L, char_len, d_char = ch_emb.size()
+        ch_emb = ch_emb.permute(0, 1, 3, 2).contiguous().view(B * L, d_char, char_len)  # [B*L, d_char, char_len]
         ch_emb = self.drop_char(ch_emb)
-        ch_emb = self.conv2d(ch_emb)
+        ch_emb = self.char_conv(ch_emb)
         ch_emb = self.act(ch_emb)
-        ch_emb, _ = torch.max(ch_emb, dim=3)  # [B, d_char, L]
+        ch_emb, _ = torch.max(ch_emb, dim=2)  # [B*L, d_char]
+        ch_emb = ch_emb.view(B, L, d_char).permute(0, 2, 1).contiguous()  # [B, d_char, L]
 
         wd_emb = self.drop(wd_emb)
         wd_emb = wd_emb.transpose(1, 2)  # [B, d_word, L]

@@ -58,7 +58,19 @@ def squad_evaluate(eval_file, answer_dict):
         ground_truths = eval_file[key]["answers"]
         exact_match += metric_max_over_ground_truths(exact_match_score, pred, ground_truths)
         f1 += metric_max_over_ground_truths(f1_score, pred, ground_truths)
-    return {"exact_match": 100.0 * exact_match / total, "f1": 100.0 * f1 / total}
+    if total == 0:
+        return {
+            "exact_match": 0.0,
+            "f1": 0.0,
+            "exact_match_count": 0,
+            "total_count": 0,
+        }
+    return {
+        "exact_match": 100.0 * exact_match / total,
+        "f1": 100.0 * f1 / total,
+        "exact_match_count": int(exact_match),
+        "total_count": int(total),
+    }
 
 
 def convert_tokens(eval_file, qa_id, pp1, pp2):
@@ -80,9 +92,36 @@ def convert_tokens(eval_file, qa_id, pp1, pp2):
     return answer_dict, remapped_dict
 
 
+def decode_best_spans(p1: torch.Tensor, p2: torch.Tensor, max_answer_len: int = 30):
+    """Jointly decode start/end by maximizing p(start)+p(end) under constraints.
+
+    Args:
+        p1: Log-probabilities for start index, shape [B, L].
+        p2: Log-probabilities for end index, shape [B, L].
+        max_answer_len: Maximum span length in tokens.
+    """
+    bsz, seqlen = p1.shape
+    scores = p1.unsqueeze(2) + p2.unsqueeze(1)  # [B, L, L]
+
+    valid = torch.triu(torch.ones(seqlen, seqlen, dtype=torch.bool, device=p1.device), diagonal=0)
+    if max_answer_len is not None and max_answer_len > 0:
+        valid = valid & torch.tril(
+            torch.ones(seqlen, seqlen, dtype=torch.bool, device=p1.device),
+            diagonal=max_answer_len - 1,
+        )
+
+    scores = scores.masked_fill(~valid.unsqueeze(0), -1e30)
+
+    flat = scores.view(bsz, -1).argmax(dim=1)
+    yp1 = flat // seqlen
+    yp2 = flat % seqlen
+    return yp1, yp2
+
+
 @torch.no_grad()
 def run_eval(model, dataset, eval_file, num_batches, batch_size,
-             use_random_batches, device, loss_fn=qa_nll_loss):
+             use_random_batches, device, loss_fn=qa_nll_loss,
+             max_answer_len: int = 30):
     loader = make_loader(dataset, batch_size, shuffle=use_random_batches)
     # num_batches=-1 means evaluate the full dataset
     batch_limit = None if num_batches < 0 else num_batches
@@ -104,13 +143,8 @@ def run_eval(model, dataset, eval_file, num_batches, batch_size,
         loss = loss_fn(p1, p2, y1, y2)
         losses.append(float(loss.item()))
 
-        yp1 = torch.argmax(p1, dim=1)
-        yp2 = torch.argmax(p2, dim=1)
-        yps = torch.stack([yp1, yp2], dim=1)
-        ymin, _ = torch.min(yps, dim=1)
-        ymax, _ = torch.max(yps, dim=1)
-
-        answer_dict_, _ = convert_tokens(eval_file, ids.tolist(), ymin.tolist(), ymax.tolist())
+        yp1, yp2 = decode_best_spans(p1, p2, max_answer_len=max_answer_len)
+        answer_dict_, _ = convert_tokens(eval_file, ids.tolist(), yp1.tolist(), yp2.tolist())
         answer_dict.update(answer_dict_)
 
     metrics = squad_evaluate(eval_file, answer_dict)

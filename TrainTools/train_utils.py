@@ -11,7 +11,9 @@ from tqdm import tqdm
 
 def train_single_epoch(model, optimizer, scheduler, data_iter,
                        steps, grad_clip, loss_fn, device,
-                       global_step: int = 0) -> float:
+                       global_step: int = 0,
+                       warmup_steps: int = 0,
+                       accumulate_grad_steps: int = 4) -> float:
     """
     Run one block of `steps` training iterations consuming from `data_iter`.
     Returns the mean loss over this block.
@@ -19,22 +21,42 @@ def train_single_epoch(model, optimizer, scheduler, data_iter,
     model.train()
     loss_list = []
 
-    for _ in tqdm(range(steps), total=steps):
-        optimizer.zero_grad(set_to_none=True)
+    base_lrs = [group.get("base_lr", group["lr"]) for group in optimizer.param_groups]
+    optimizer.zero_grad(set_to_none=True)
 
-        Cwid, Ccid, Qwid, Qcid, y1, y2, _ = next(data_iter)
-        Cwid, Ccid = Cwid.to(device), Ccid.to(device)
-        Qwid, Qcid = Qwid.to(device), Qcid.to(device)
-        y1, y2     = y1.to(device),   y2.to(device)
+    for i in tqdm(range(steps), total=steps):
+        # Optional linear warmup to avoid unstable early updates.
+        if warmup_steps > 0:
+            step_num = global_step + i + 1
+            if step_num <= warmup_steps:
+                warm = step_num / float(warmup_steps)
+                for group, base_lr in zip(optimizer.param_groups, base_lrs):
+                    group["lr"] = base_lr * warm
 
-        p1, p2 = model(Cwid, Ccid, Qwid, Qcid)
-        loss   = loss_fn(p1, p2, y1, y2)
-        loss_list.append(float(loss.item()))
+        accumulated_loss = 0.0
+        for _ in range(accumulate_grad_steps):
+            Cwid, Ccid, Qwid, Qcid, y1, y2, _ = next(data_iter)
+            Cwid, Ccid = Cwid.to(device), Ccid.to(device)
+            Qwid, Qcid = Qwid.to(device), Qcid.to(device)
+            y1, y2     = y1.to(device),   y2.to(device)
 
-        loss.backward()
+            p1, p2 = model(Cwid, Ccid, Qwid, Qcid)
+            loss   = loss_fn(p1, p2, y1, y2)
+            
+            # Normalize loss for accumulation
+            loss = loss / accumulate_grad_steps
+            loss.backward()
+            accumulated_loss += float(loss.item())
+
+        loss_list.append(accumulated_loss)
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
-        scheduler.step()
+        optimizer.zero_grad(set_to_none=True)
+        
+        # Only step the scheduler if we are past the warmup phase
+        if warmup_steps == 0 or (global_step + i + 1) > warmup_steps:
+            scheduler.step()
 
     mean_loss = float(np.mean(loss_list))
     print(f"STEP {global_step + steps:8d}  loss {mean_loss:8f}\n")
