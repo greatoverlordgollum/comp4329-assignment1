@@ -12,6 +12,8 @@ class Highway(nn.Module):
         self.n = layer_num
         self.linear = nn.ModuleList([nn.Linear(size, size) for _ in range(self.n)])
         self.gate = nn.ModuleList([nn.Linear(size, size) for _ in range(self.n)])
+        for i in range(self.n):
+            self.gate[i].bias.data.fill_(-1.0)
         self.act = get_activation(act_name)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

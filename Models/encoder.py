@@ -102,7 +102,8 @@ class EncoderBlock(nn.Module):
         self.conv_drops = nn.ModuleList([Dropout(dropout * (i + 1) / conv_num) for i in range(conv_num)])
         self.drop = Dropout(dropout)
         self.self_att = MultiHeadAttention(d_model, num_heads, dropout)
-        self.fc = nn.Linear(d_model, d_model, bias=True)
+        self.fc1 = nn.Linear(d_model, d_model * 4, bias=True)
+        self.fc2 = nn.Linear(d_model * 4, d_model, bias=True)
         self.pos = PosEncoder(d_model, length)
         self.act = get_activation(act_name)
 
@@ -130,8 +131,12 @@ class EncoderBlock(nn.Module):
         res = out
         out = self.norme(out)
         
-        out = self.fc(out.transpose(1, 2)).transpose(1, 2)
+        out = out.transpose(1, 2)
+        out = self.fc1(out)
         out = self.act(out)
+        out = self.fc2(out)
+        out = out.transpose(1, 2)
+        
         out = self.drop(out)
         out = out + res
         return out

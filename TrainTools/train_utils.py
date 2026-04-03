@@ -9,11 +9,39 @@ import torch
 from tqdm import tqdm
 
 
+class EMA:
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = {}
+        self.original = {}
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
+                self.shadow[name] = new_average.clone()
+
+    def apply_shadow(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.original[name] = param.data.clone()
+                param.data = self.shadow[name]
+
+    def restore(self, model):
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                param.data = self.original[name]
+
+
 def train_single_epoch(model, optimizer, scheduler, data_iter,
                        steps, grad_clip, loss_fn, device,
                        global_step: int = 0,
                        warmup_steps: int = 0,
-                       accumulate_grad_steps: int = 4) -> float:
+                       accumulate_grad_steps: int = 4,
+                       ema=None) -> float:
     """
     Run one block of `steps` training iterations consuming from `data_iter`.
     Returns the mean loss over this block.
@@ -52,6 +80,10 @@ def train_single_epoch(model, optimizer, scheduler, data_iter,
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
+        
+        if ema is not None:
+            ema.update(model)
+
         optimizer.zero_grad(set_to_none=True)
         
         # Only step the scheduler if we are past the warmup phase

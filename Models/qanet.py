@@ -62,13 +62,23 @@ class QANet(nn.Module):
         if self.cq_resizer.bias is not None:
             constant_(self.cq_resizer.bias, 0.0)
 
-        self.model_enc_blks = nn.ModuleList([
+        self.model_enc_blks1 = nn.ModuleList([
+            EncoderBlock(d_model, num_heads, dropout, conv_num=2, k=5, length=len_c, 
+                         init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
+            for _ in range(7)
+        ])
+        self.model_enc_blks2 = nn.ModuleList([
+            EncoderBlock(d_model, num_heads, dropout, conv_num=2, k=5, length=len_c, 
+                         init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
+            for _ in range(7)
+        ])
+        self.model_enc_blks3 = nn.ModuleList([
             EncoderBlock(d_model, num_heads, dropout, conv_num=2, k=5, length=len_c, 
                          init_name=init_name, act_name=act_name, norm_name=norm_name, norm_groups=norm_groups)
             for _ in range(7)
         ])
 
-        self.out = Pointer(d_model)
+        self.out = Pointer(d_model, dropout)
 
     def forward(self, Cwid, Ccid, Qwid, Qcid):
         cmask = (Cwid == 0)  # True means PAD
@@ -86,16 +96,17 @@ class QANet(nn.Module):
 
         X = self.cq_att(Ce, Qe, cmask, qmask)
 
-        M1 = self.cq_resizer(X)
-        for enc in self.model_enc_blks:
+        M0 = self.cq_resizer(X)
+        M1 = M0
+        for enc in self.model_enc_blks1:
             M1 = enc(M1, cmask)
 
         M2 = M1
-        for enc in self.model_enc_blks:
+        for enc in self.model_enc_blks2:
             M2 = enc(M2, cmask)
 
         M3 = M2
-        for enc in self.model_enc_blks:
+        for enc in self.model_enc_blks3:
             M3 = enc(M3, cmask)
 
         p1, p2 = self.out(M1, M2, M3, cmask)

@@ -26,6 +26,8 @@ from TrainTools.train_utils import train_single_epoch, save_checkpoint
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+from TrainTools.train_utils import train_single_epoch, save_checkpoint, EMA
+
 def train(
     # ── Data paths ────────────────────────────────────────────────────────────
     train_npz:          str   = "_data/train.npz",
@@ -170,6 +172,7 @@ def train(
     best_em  = -1.0
     patience = 0
     history  = []
+    ema = EMA(model, 0.9999)
 
     for step0 in range(0, num_steps, checkpoint):
         steps_this_block = min(checkpoint, num_steps - step0)
@@ -180,8 +183,10 @@ def train(
             global_step=step0,
             warmup_steps=warmup_steps if optimizer_name == "adam" else 0,
             accumulate_grad_steps=accumulate_grad_steps,
+            ema=ema,
         )
 
+        ema.apply_shadow(model)
         if val_num_batches > 0:
             tr_metrics, _ = run_eval(
                 model, train_dataset, train_eval,
@@ -236,6 +241,8 @@ def train(
             if patience > early_stop:
                 print("Early stopping triggered.")
                 break
+
+        ema.restore(model)
 
         with open(os.path.join(log_dir, "answers.json"), "w") as f:
             json.dump(ans, f)

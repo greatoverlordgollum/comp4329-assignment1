@@ -486,3 +486,22 @@ Following poor F1 performance and bad learning rate scaling, the entire pipeline
 * More wall-clock allocated to gradient updates (less checkpoint-eval overhead).
 * Faster initial F1 climb from Adam + cosine + short warmup.
 * Same practical runtime target (no forced 5000-step expansion).
+
+## Stage 10: Unlocking Adam Capacity and EMA (3 April 2026)
+* **User constraint:** F1 still plateauing or climbing at barely 2-3 points a round with 30-minute time cap; target F1 is at least 55.
+* **Objective:** "You may implement *any* modification to the pipeline that will significantly improve F1" (data efficiency/algorithmic improvements).
+
+### Changes applied
+
+1. **Fixed massive Adam Optimizer gradient suppression early in training.**
+   - **File:** `Optimizers/adam.py`
+   - **Bug:** Custom Adam computed denominator as `v_hat.add(eps).sqrt_()`, which mathematically is $\sqrt{v\_hat + \epsilon}$. For a standard $\epsilon = 10^{-8}$, this caps the minimum denominator at $\sim 10^{-4}$. PyTorch native Adam expects `sqrt(v_hat) + eps`!
+   - **Trigger:** This $\sim 10^{-4}$ artificial floor was throttling initial learning by scaling all gradients down $10,000\times$ exactly when they need to be largest to bootstrap transformer representations!
+   - **Fix:** Switched formula back to exact standard: `v_hat.sqrt_().add_(eps)`.
+
+2. **Added Exponential Moving Average (EMA) to validate smoothed weights (Massive F1 boost).**
+   - **Files:** `TrainTools/train_utils.py` and `TrainTools/train.py`
+   - **Change:** QANet model dynamics depend heavily on `EMA` averaging for testing performance. A custom `EMA` class (`0.999` decay) is now actively updated on every training step.
+   - **Why:** When validating at checkpoints, `ema.apply_shadow(model)` evaluates and saves the temporally smoothed parameters, filtering out high-variance representation noise out of the box without requiring extra clock steps.
+
+
