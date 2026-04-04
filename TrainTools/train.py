@@ -23,7 +23,7 @@ from EvaluateTools.eval_utils import run_eval
 from TrainTools.train_utils import train_single_epoch, save_checkpoint
 
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
 
 from TrainTools.train_utils import train_single_epoch, save_checkpoint, EMA
@@ -172,7 +172,8 @@ def train(
     best_em  = -1.0
     patience = 0
     history  = []
-    ema = EMA(model, 0.9999)
+    ema = EMA(model, 0.999)
+    scaler = torch.cuda.amp.GradScaler() if DEVICE.type == "cuda" else None
 
     for step0 in range(0, num_steps, checkpoint):
         steps_this_block = min(checkpoint, num_steps - step0)
@@ -184,6 +185,7 @@ def train(
             warmup_steps=warmup_steps if optimizer_name == "adam" else 0,
             accumulate_grad_steps=accumulate_grad_steps,
             ema=ema,
+            scaler=scaler,
         )
 
         ema.apply_shadow(model)

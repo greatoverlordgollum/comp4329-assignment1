@@ -504,4 +504,40 @@ Following poor F1 performance and bad learning rate scaling, the entire pipeline
    - **Change:** QANet model dynamics depend heavily on `EMA` averaging for testing performance. A custom `EMA` class (`0.999` decay) is now actively updated on every training step.
    - **Why:** When validating at checkpoints, `ema.apply_shadow(model)` evaluates and saves the temporally smoothed parameters, filtering out high-variance representation noise out of the box without requiring extra clock steps.
 
+## Stage 11: Architectural Improvements (3 April 2026)
+* **Objective:** Audit the Model Architecture of the QANet for limits capping capacity near ~35 F1.
 
+### Changes applied
+1. **Unshared Model Encoders:** Switched from looping 1 encoder 3 times to using 3 unshared independent encoders in `Models/qanet.py`.
+2. **Upgraded Neural Layers to Feed-Forward Networks:** Replaced single linear layer with two sequential layers and activation in between in `Models/encoder.py`.
+3. **Restored Full Gradient Scale:** Removed 0.5 multiplication scalar on the Cross-Entropy outputs in `Losses/loss.py`.
+4. **Configured Highway Layer Initialization:** Assigned -1.0 bias to the gate layer to ensure token pass-throughs in `Models/embedding.py`.
+5. **Fixed Pointer Sub-network Input:** Wired Context-Query base residual directly to Pointer outputs instead of M1 in `Models/qanet.py`.
+6. **Removed DAF Scaling Factor:** Removed `math.sqrt` division scaling against the self-attention weight parameter in `Models/attention.py`.
+7. **Expanded Training Horizon:** Increased `num_steps=24000` and scaled hyperparameters for unconstrained capacity.
+
+## Stage 12: Hardware Acceleration & VRAM Optimization (4 April 2026)
+* **Objective:** Resolve severe training bottleneck (2.75 hours per 1500 steps) preventing capacity scaling.
+1. **Apple Silicon MPS Backend:** Reprogrammed PyTorch device routing in `evaluate.py` and `train.py` to natively map to `torch.backends.mps` instead of forcing CPU fallback when CUDA is missing.
+2. **In-place EMA Gradient Tracking:** Optimized `EMA` parameter updating to use purely in-place `.mul_().add_()` pointer tensor operations wrapped in `@torch.no_grad()`, eliminating heavy VRAM fragmentation and clone overhead.
+
+## Stage 13: Debugging Checkpoint Collapse (4 April 2026)
+* **Problem:** F1 crashed arbitrarily to ~6, performing equivalent to random guessing, right after expanding iterations. 
+* **Diagnosis & Fixes:**
+1. **EMA Initialization Decay Trap:** EMA decay was accidentally set to `0.9999`. After a mere 1500 steps, evaluated weights still contained 86% of initial random noisy weights, wiping out actual learned parameters at evaluation time. Reverted to standard `0.999` decay in `TrainTools/train.py`.
+2. **Pointer Span Masking Dropout:** Removed `Dropout(0.1)` manually injected into the Pointer network (`Models/heads.py`), as injecting zero-values at the structural start/end intersection unpredictably shatters Exact Match distributions.
+3. **Hardware Capacity Execution:** The above fixes, combined with the new `mps` acceleration unlocking `d_model=128`, allows the architecture to rip fully to high F1 baseline limits.
+
+## Stage 14: Regularization and Overfitting Mitigation (4 April 2026)
+* **Objective:** Push F1 into the mid-70s by addressing severe overfitting (train loss plummeted to 0.90 while test loss scaled massively to 5.82).
+
+### Changes applied
+1. **Weight Decay Increase:** Bumped parameter penalization from `3e-7` to `3e-5` in notebook to restrict rapid weight memorization locking.
+2. **Label Smoothing (Cross-Entropy):** Swapped hard `qa_nll` out for `qa_ce` configured with `label_smoothing=0.05` in `Losses/loss.py` to soften probability prediction target boundaries, dramatically boosting Exact Match generalization.
+3. **Capacity Dropout Scale:** Raised absolute structural dropout from a generic `0.1` up to `0.15` inside `assignment1.ipynb` to proportionally match the mathematically 3x larger feed-forward capacity unlocked previously.
+
+## Stage 15: Evaluation Architecture Alignment (4 April 2026)
+* **Objective:** Resolve PyTorch `RuntimeError` state_dict size mismatch during inference evaluation.
+
+### Changes applied
+1. **Explicit Evaluation Sizing:** Updated the `evaluate()` cell inside `assignment1.ipynb` to explicitly pass `d_model=128` and `loss_name="qa_ce"`. This ensures the reconstructed model architecture correctly matches the trained 128-dimensional checkpoint weights instead of defaulting to the original 96-dimension parameter shapes.

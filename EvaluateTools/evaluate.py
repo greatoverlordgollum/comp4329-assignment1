@@ -23,7 +23,7 @@ from Models import QANet
 from EvaluateTools.eval_utils import run_eval
 
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 
 
 def evaluate(

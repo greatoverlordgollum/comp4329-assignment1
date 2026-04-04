@@ -18,22 +18,24 @@ class EMA:
             if param.requires_grad:
                 self.shadow[name] = param.data.clone()
 
+    @torch.no_grad()
     def update(self, model):
         for name, param in model.named_parameters():
             if param.requires_grad:
-                new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
-                self.shadow[name] = new_average.clone()
+                self.shadow[name].mul_(self.decay).add_(param.data, alpha=1.0 - self.decay)
 
+    @torch.no_grad()
     def apply_shadow(self, model):
         for name, param in model.named_parameters():
             if param.requires_grad:
                 self.original[name] = param.data.clone()
-                param.data = self.shadow[name]
+                param.data.copy_(self.shadow[name])
 
+    @torch.no_grad()
     def restore(self, model):
         for name, param in model.named_parameters():
             if param.requires_grad:
-                param.data = self.original[name]
+                param.data.copy_(self.original[name])
 
 
 def train_single_epoch(model, optimizer, scheduler, data_iter,
@@ -41,7 +43,7 @@ def train_single_epoch(model, optimizer, scheduler, data_iter,
                        global_step: int = 0,
                        warmup_steps: int = 0,
                        accumulate_grad_steps: int = 4,
-                       ema=None) -> float:
+                       ema=None, scaler=None) -> float:
     """
     Run one block of `steps` training iterations consuming from `data_iter`.
     Returns the mean loss over this block.
@@ -68,18 +70,30 @@ def train_single_epoch(model, optimizer, scheduler, data_iter,
             Qwid, Qcid = Qwid.to(device), Qcid.to(device)
             y1, y2     = y1.to(device),   y2.to(device)
 
-            p1, p2 = model(Cwid, Ccid, Qwid, Qcid)
-            loss   = loss_fn(p1, p2, y1, y2)
-            
-            # Normalize loss for accumulation
-            loss = loss / accumulate_grad_steps
-            loss.backward()
+            if scaler is not None:
+                with torch.cuda.amp.autocast():
+                    p1, p2 = model(Cwid, Ccid, Qwid, Qcid)
+                    loss   = loss_fn(p1, p2, y1, y2)
+                    loss = loss / accumulate_grad_steps
+                scaler.scale(loss).backward()
+            else:
+                p1, p2 = model(Cwid, Ccid, Qwid, Qcid)
+                loss   = loss_fn(p1, p2, y1, y2)
+                loss = loss / accumulate_grad_steps
+                loss.backward()
+                
             accumulated_loss += float(loss.item())
 
         loss_list.append(accumulated_loss)
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        if scaler is not None:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
         
         if ema is not None:
             ema.update(model)

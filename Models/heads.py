@@ -13,7 +13,6 @@ from .dropout import Dropout
 class Pointer(nn.Module):
     def __init__(self, d_model: int, dropout: float = 0.1):
         super().__init__()
-        self.drop = Dropout(dropout)
         w1 = torch.empty(d_model * 2)
         w2 = torch.empty(d_model * 2)
         lim = 3.0 / (2.0 * d_model)
@@ -23,9 +22,6 @@ class Pointer(nn.Module):
         self.w2 = nn.Parameter(w2)
 
     def forward(self, M1: torch.Tensor, M2: torch.Tensor, M3: torch.Tensor, mask: torch.Tensor):
-        M1 = self.drop(M1)
-        M2 = self.drop(M2)
-        M3 = self.drop(M3)
         X1 = torch.cat([M1, M2], dim=1)  # [B, 2C, L]
         X2 = torch.cat([M1, M3], dim=1)  # [B, 2C, L]
         Y1 = torch.matmul(self.w1, X1)  # [B, L]
