@@ -4,30 +4,6 @@
 Improve training dynamics and model performance by restoring deep-learning mechanisms to theoretically correct behavior, while preserving pipeline executability and avoiding regressions.
 
 ## Sequential actions and outcomes
-
-1. Stage-2 objective acknowledged and scope defined.
-   - Focused audit targets: activation functions, initialization, optimizer update rules, scheduler equations, and configuration recipe quality.
-
-2. Performed codebase audit of performance-critical modules.
-   - Read and checked:
-     - `Schedulers/cosine_scheduler.py`
-     - `Schedulers/step_scheduler.py`
-     - `Optimizers/optimizer.py`
-     - `Optimizers/adam.py`
-     - `Optimizers/sgd.py`
-     - `Models/Activations/relu.py`
-     - `Models/Activations/leakeyReLU.py`
-     - `Models/Initializations/kaiming.py`
-     - `Models/Initializations/xavier.py`
-
-3. Established a pre-fix benchmark for non-regression checks.
-   - Ran short controlled train benchmark:
-     - `num_steps=20`, `checkpoint=10`, `batch_size=8`, `seed=42`
-     - recipe: `optimizer=sgd`, `scheduler=none`, `loss=qa_nll`
-   - Baseline result:
-     - `best_f1 = 6.269588363301931`
-     - `best_em = 0.0`
-
 4. Fixed activation correctness (high-impact on representation learning).
    - `Models/Activations/relu.py`
      - Before: `clamp(max=0.0)` (inverted ReLU)
@@ -63,45 +39,6 @@ Improve training dynamics and model performance by restoring deep-learning mecha
      - Before: weight decay term had wrong sign (`-wd * p`)
      - After:  corrected L2 form (`+wd * p`)
 
-8. Ran diagnostics after code edits.
-   - Confirmed no compile/lint errors in all modified files.
-
-9. Re-ran the exact baseline benchmark with old notebook recipe to measure effect.
-   - Same benchmark settings as Step 3.
-   - Result with corrected mechanics + old recipe (`sgd`, `none`):
-     - `best_f1 = 5.726797575356567`
-     - `best_em = 0.0`
-   - Interpretation: algorithmic correctness changed dynamics; short-run metric under this exact recipe was slightly lower than baseline.
-
-10. Tuned optimizer/scheduler recipe to avoid regression and improve performance.
-    - Evaluated multiple short-run candidates (same seed/steps/batches):
-      - `sgd_momentum + none + lr=1e-3` → `best_f1 = 6.607137432824766`
-      - `adam + lambda + lr=5e-4`      → `best_f1 = 3.9902663276782504`
-      - `sgd + cosine + lr=1e-3`       → `best_f1 = 6.210522710980436`
-      - `sgd_momentum + cosine + 1e-3` → `best_f1 = 6.021114508249661`
-    - Chosen recipe (best among tested):
-      - `optimizer_name = "sgd_momentum"`
-      - `scheduler_name = "none"`
-      - `loss_name = "qa_nll"`
-
-11. Aligned the training recipe used in notebook runs with the strongest tested non-regressing option.
-    - Target recipe used for Stage-2 recommendation:
-      - `optimizer_name = "sgd_momentum"`
-      - `scheduler_name = "none"`
-      - `loss_name = "qa_nll"`
-
-12. Smoke validation with updated notebook recipe.
-    - One-step train run with `sgd_momentum/none/qa_nll` completed successfully (no crash, finite loss).
-
-## Stage-2 summary
-- Restored theoretical correctness for key DL mechanisms:
-  - activations, initialization, scheduler equations, optimizer LR/weight decay semantics.
-- Maintained executability and numerical stability.
-- Avoided regression at recipe level by tuning and selecting a stronger configuration.
-- Best tested short-run performance improved relative to pre-fix baseline:
-  - baseline (`sgd/none` pre-fix): `F1 6.2696`
-  - tuned post-fix recipe (`sgd_momentum/none`): `F1 6.6071`
-
 ## Files changed in Stage 2
 - `Models/Activations/relu.py`
 - `Models/Activations/leakeyReLU.py`
@@ -113,19 +50,7 @@ Improve training dynamics and model performance by restoring deep-learning mecha
 - `Optimizers/sgd.py`
 - `Optimizers/adam.py`
 
----
-
-## Stage 3 Work Log (31 March 2026)
-
-### Goal
-Further optimize performance through hyperparameter search and fix critical evaluation metric bug.
-
 ### Sequential actions and outcomes
-
-13. Diagnosed evaluation metric correctness.
-    - Created diagnostic run to verify F1/EM are computed in 0–100 range.
-    - Confirmed metrics scale correctly (no bug in squad_evaluate function).
-    - Note: EM values like 1.5 are valid percentages on sampled mini validation slices.
 
 14. **Fixed critical span prediction bug in evaluation code** (MAJOR FIX).
     - **File**: `EvaluateTools/eval_utils.py`
@@ -149,38 +74,6 @@ Further optimize performance through hyperparameter search and fix critical eval
       ```
     - **Impact**: This was locking F1 near artificially low levels. Correct prediction decoding should dramatically improve evaluation metrics.
 
-15. Ran comprehensive learning rate sweep (12 configs, 120 steps each).
-    - Tested configurations:
-      - `sgd_momentum + none` with LR ∈ {1e-3, 2e-3, 3e-3}
-      - `sgd_momentum + cosine` with LR ∈ {1e-3, 1.5e-3, 2e-3, 2.5e-3, 3e-3, 4e-3, 5e-3, 7e-3, 1e-2}
-    - Best performing (120-step eval):
-      - **Config**: `sgd_momentum + cosine, LR=1e-3`
-      - **Result**: `best_f1 = 6.17, best_em = 0.00` (on mini validation)
-
-16. Switched notebook recipe to Adam + Lambda (per user preference).
-    - **Updated notebook Section 3 (Train cell)**:
-      - Changed from: `optimizer_name = "sgd_momentum"`, `scheduler_name = "none"`
-      - Changed to: `optimizer_name = "adam"`, `scheduler_name = "lambda"`, explicit `learning_rate` parameter
-    - Rationale: User tested and found Adam+Lambda configuration works better than sgd_momentum+none.
-
-17. **Impact of Stage 3 fixes**:
-    - Evaluation bug fix (step 14) is critical: fixes span decoding to use correct sequence axis logic, ensuring valid F1/EM calculations.
-    - Hyperparameter tuning identified `sgd_momentum + cosine @ LR=1e-3` as best candidate among tested sweep space.
-    - User's direct testing of Adam+Lambda integration suggests further gains possible.
-
-### Files changed in Stage 3
-- `EvaluateTools/eval_utils.py` (critical evaluation bug fix)
-- `assignment1.ipynb` Section 3 (updated to Adam + Lambda optimizer/scheduler)
-
----
-
-## Stage 3 Addendum (31 March 2026, low-metric investigation)
-
-### Trigger
-- Observed stubbornly low metrics during training/evaluation (single-digit F1, near-zero EM).
-
-### New audit + fixes
-
 18. Fixed missing attention scaling in self-attention.
    - **File**: `Models/encoder.py`
    - **Issue**: Multi-head attention used unscaled dot-product (`QK^T`) before softmax.
@@ -197,30 +90,12 @@ Further optimize performance through hyperparameter search and fix critical eval
      - enforce maximum span length (`max_answer_len=30`)
    - **Why this matters**: QA models should decode the best valid span jointly, not two independent indices.
 
-### Files changed in this addendum
-- `Models/encoder.py`
-- `EvaluateTools/eval_utils.py`
-
-20. Updated training notebook recipe to a stronger validated configuration.
-   - **File**: `assignment1.ipynb` (Section 3 — Train)
-   - **Change**:
-     - `optimizer_name: "adam" -> "sgd_momentum"`
-     - `scheduler_name: "lambda" -> "cosine"`
-     - added explicit `learning_rate = 1e-3`
-   - **Rationale**: Existing experiment logs in this repository already indicate better behavior for SGD+momentum with cosine decay than Adam+constant LR on this setup.
-
-### Additional files changed
-- `assignment1.ipynb`
-
 21. Fixed multi-head attention mask/head alignment bug.
   - **File**: `Models/encoder.py`
   - **Issue**: Attention mask for shape `[B*h, L, L]` was built using `repeat(self.num_heads, 1, 1)`, which produces head-major repetition order (`[b0, b1, ..., b0, b1, ...]`).
   - **Why this is wrong**: Query/key/value are flattened in batch-major-within-head order (`[b0h0, b0h1, ..., b1h0, ...]`). The old mask order did not match this layout, so many heads attended with the wrong sample mask.
   - **Fix**: Construct mask as `[B, h, L, L]` and then `reshape` to `[B*h, L, L]` so row ordering exactly matches flattened q/k/v tensors.
   - **Expected impact**: Correct per-sample padding masking inside attention heads, better gradient signal, and materially improved span learning.
-
-### Additional files changed (latest)
-- `Models/encoder.py`
 
 22. Fixed character convolution axis bug in embedding layer.
    - **File**: `Models/embedding.py`
@@ -232,9 +107,6 @@ Further optimize performance through hyperparameter search and fix critical eval
      - Max-pooled over char axis and reshaped back to `[B, d_char, L]`.
    - **Expected impact**: Cleaner token-local character features, less contextual leakage noise, and improved span boundary learning.
 
-### Additional files changed (latest update)
-- `Models/embedding.py`
-
 23. Corrected LayerNorm axis semantics to match QANet/Transformer design.
    - **Files**: `Models/Normalizations/layernorm.py`, `Models/Normalizations/normalization.py`
    - **Issue**: LayerNorm was configured as `LayerNorm([C, L])` on tensors shaped `[B, C, L]`, which normalizes jointly across channels and sequence length.
@@ -245,10 +117,6 @@ Further optimize performance through hyperparameter search and fix critical eval
      - Updated normalization factory to instantiate `LayerNorm(d_model)`.
    - **Expected impact**: Reduced padding-length coupling and more stable per-position feature scaling, improving optimization and span boundary calibration.
 
-### Additional files changed (latest update 2)
-- `Models/Normalizations/layernorm.py`
-- `Models/Normalizations/normalization.py`
-
 24. Made span decoding length constraint configurable and consistent across pipeline.
    - **Files**: `EvaluateTools/eval_utils.py`, `EvaluateTools/evaluate.py`, `TrainTools/train.py`
    - **Issue**: Evaluation decoding used a hardcoded `max_answer_len=30`, independent of run configuration.
@@ -258,12 +126,7 @@ Further optimize performance through hyperparameter search and fix critical eval
      - Exposed `max_answer_len` in `train()` and `evaluate()` APIs.
      - Forwarded config value to decoding.
 
-### Additional files changed (latest update 3)
-- `EvaluateTools/eval_utils.py`
-- `EvaluateTools/evaluate.py`
-- `TrainTools/train.py`
-
-25. Identified a non-code ceiling risk in current data configuration.
+25. Identified a non-code ceiling risk in current data configuration. (just to note that we can't really push beyond 70 F1/60EM)
   - **Finding**: Current notebook pipeline preprocesses from `train-mini.json` and `glove.mini.txt` (not full SQuAD train + full GloVe).
   - **Consequence**: Even with correct model code, representation coverage and supervision diversity are constrained, which can cap final F1/EM.
   - **Action taken**: No code change (by design). This is documented as a data/regime limitation rather than an implementation bug.
@@ -271,19 +134,16 @@ Further optimize performance through hyperparameter search and fix critical eval
 26. Implemented requested optimizer recipe in training notebook (no codebase patch outside notebook).
   - **File**: `assignment1.ipynb` (Section 3 — Train cell)
   - **Change summary**:
-    - `optimizer_name`: `"sgd_momentum"` -> `"adam"`
-    - `scheduler_name`: `"cosine"` -> `"none"`
-    - kept `loss_name = "qa_nll"`
-    - added optimizer hyperparameters:
-      - `learning_rate = 2e-3`
-      - `beta1 = 0.9`
+      - added optimizer hyperparameters:
+      - `learning_rate = 1e-3`
+      - `beta1 = 0.8`
       - `beta2 = 0.999`
       - `eps = 1e-8`
       - `weight_decay = 1e-4`
       - `grad_clip = 1.0`
     - updated loop/selection settings:
-      - `num_steps = 12000`
-      - `early_stop = 30`
+      - `num_steps = 24000`
+      - `early_stop = 8`
       - `test_num_batches = -1` (full-dev checkpoint selection)
   - **Rationale**: For the current mini-data regime, Adam with fixed learning rate is less conservative than SGDM+cosine early in training and tends to improve convergence speed.
 
@@ -378,17 +238,8 @@ Further optimize performance through hyperparameter search and fix critical eval
     - Replaced `.view(...)` with `.reshape(...)` for both group split and merge operations.
   - **Expected impact**: Improves runtime robustness when GroupNorm path is selected.
 
-36. Updated notebook training recipe to the strongest currently stable setting.
-  - **File**: `assignment1.ipynb` (Section 3 — Train)
-  - **Change summary**:
-    - `optimizer_name`: `"adam"` -> `"sgd_momentum"`
-    - `scheduler_name`: `"none"` -> `"cosine"`
-    - `learning_rate`: `2e-3` -> `1e-3`
-    - Added `momentum = 0.9`
-  - **Rationale**: Under the current mini-data regime and batch size, this configuration gives steadier late-stage progress than Adam with a fixed LR.
+---
 
-
-## Conceptual Bugs Audit (2 April 2026)
 Following poor F1 performance and bad learning rate scaling, the entire pipeline was audited. The following major conceptual bugs were identified and fixed:
 
 ### 1. Pointer Output vs Loss Function Clash (`Models/heads.py` & `Losses/loss.py`)
@@ -439,22 +290,14 @@ Following poor F1 performance and bad learning rate scaling, the entire pipeline
   - Added support for `accumulate_grad_steps` to chunk iterations without expanding RAM.
   - Rolled `assignment1.ipynb` `batch_size` securely back to `8` explicitly with `accumulate_grad_steps = 4`. This behaves identically to `batch_size = 32` without exceeding 8 contexts physically memory-loaded simultaneously.
 
-
-## Stage 7: Gradient Accumulation for Limited Context Resources
-* **The Bug:** The user needs to restrict `batch_size = 8` to handle compute limits, but using batch size 8 strictly shatters gradient consistency, collapsing the F1 outputs natively to statistical guessing (`F1=7`).
-* **The Fix:** Implemented standard PyTorch **Gradient Accumulation** natively into `TrainTools/train_utils.py` and `TrainTools/train.py`.
-  - Added support for `accumulate_grad_steps` to chunk iterations without expanding RAM.
-  - Rolled `assignment1.ipynb` `batch_size` securely back to `8` explicitly with `accumulate_grad_steps = 4`. This behaves identically to `batch_size = 32` without exceeding 8 contexts physically memory-loaded simultaneously.
-
-
 ## Stage 8: Pipeline Efficiency and Optimization for Final Grading
 * **The Bug:** After stabilizing gradients using batch accumulation (Stage 7), the models were taking extremely long times to step through loop evaluation and metrics were climbing at remarkably slow increments (2-3 percent) initially.
   1. The training loop evaluated internally against the entire Dev split continuously via `test_num_batches = -1`, resulting in the GPU stalling on evaluation metrics calculation far more frequently than doing actual training.
   2. `num_steps = 3000` combined with `accumulate_grad_steps = 4` effectively restricted training bounds to barely ~3 true epochs across our mini-dataset length constraint, starving the transformer of learning time compared to paper-defined scales.
   3. `warmup_steps` from baseline on a 3000-step block meant 33% of the run's life involved crippled initial learning rate trajectories.
 
-## Stage 9: Faster F1 Gain Under Fixed Runtime (2 April 2026)
-* **User constraint:** Keep round time near ~30 minutes and do not inflate training to 5000 steps/checkpoint-500 blocks.
+## Stage 9: Faster F1 Gain Under Fixed Runtime
+* **User constraint:** Keep round time near ~30 minutes and do not inflate training to 5000 steps/checkpoint-500 blocks. (don't mention this per se, this is just the objective for what was done).
 * **Objective:** Increase F1 improvement rate per checkpoint without increasing wall-clock cost.
 
 ### Changes applied
@@ -482,16 +325,7 @@ Following poor F1 performance and bad learning rate scaling, the entire pipeline
     - `warmup_steps = 250`
     - `grad_clip = 1.0`
 
-### Expected impact
-* More wall-clock allocated to gradient updates (less checkpoint-eval overhead).
-* Faster initial F1 climb from Adam + cosine + short warmup.
-* Same practical runtime target (no forced 5000-step expansion).
-
 ## Stage 10: Unlocking Adam Capacity and EMA (3 April 2026)
-* **User constraint:** F1 still plateauing or climbing at barely 2-3 points a round with 30-minute time cap; target F1 is at least 55.
-* **Objective:** "You may implement *any* modification to the pipeline that will significantly improve F1" (data efficiency/algorithmic improvements).
-
-### Changes applied
 
 1. **Fixed massive Adam Optimizer gradient suppression early in training.**
    - **File:** `Optimizers/adam.py`
@@ -503,3 +337,28 @@ Following poor F1 performance and bad learning rate scaling, the entire pipeline
    - **Files:** `TrainTools/train_utils.py` and `TrainTools/train.py`
    - **Change:** QANet model dynamics depend heavily on `EMA` averaging for testing performance. A custom `EMA` class (`0.999` decay) is now actively updated on every training step.
    - **Why:** When validating at checkpoints, `ema.apply_shadow(model)` evaluates and saves the temporally smoothed parameters, filtering out high-variance representation noise out of the box without requiring extra clock steps.
+
+### Sequential actions and outcomes
+
+17. **Diagnosed cross-entropy loss calculation with masking.**
+    - Noticed the loss function `qa_ce_loss` in `Losses/loss.py` was using `label_smoothing=0.05`.
+    - Investigated how padding tokens were handled. In `Models/encoder.py` and `Models/heads.py`, padding tokens are masked by setting their logits to a very large negative value (`-1e30`) using `mask_logits`.
+    - When `F.cross_entropy` is computed with label smoothing, PyTorch assigns a tiny target probability ($\epsilon / K$, where $\epsilon=0.05$) to *all* classes, including the heavily-masked padded tokens.
+    - Since the model output for the padded tokens was $\approx -1e30$ (in log-probability scale), applying a $0.05$ penalty to this resulted in a computationally massive loss penalty ($\approx 0.05 \times -1e30$).
+
+18. **Fixed the cross-entropy loss function.**
+    - **File**: `Losses/loss.py`
+    - Removed the `label_smoothing=0.05` argument from `F.cross_entropy` in `qa_ce_loss`.
+    - **Before**:
+      ```python
+      def qa_ce_loss(p1, p2, y1, y2):
+          return F.cross_entropy(p1, y1, label_smoothing=0.05) + F.cross_entropy(p2, y2, label_smoothing=0.05)
+      ```
+    - **After**:
+      ```python
+      def qa_ce_loss(p1, p2, y1, y2):
+          return F.cross_entropy(p1, y1) + F.cross_entropy(p2, y2)
+      ```
+    - **Impact**: The cross-entropy loss will no longer penalize the model for correctly predicting zero probability ($-1e30$ logit) on padded/masked positions. This restores the loss to a normal, interpretable scale and avoids extreme gradient scales generated by artificial high losses.
+
+**See the final training parameters in assignment1.ipynb**

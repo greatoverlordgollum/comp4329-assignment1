@@ -1,23 +1,6 @@
 # Stage 1 Work Log (30 March 2026)
 
-## Objective
-Make the project runnable end-to-end (download/preprocess/train/evaluate paths) and document every fix sequentially.
-
 ## Sequential actions and outcomes
-
-1. Reproduced initial issue context and inspected downloader + setup files.
-   - Read `Tools/download.py`, `requirements.txt`, and `README.md`.
-   - Confirmed urllib-based downloads were vulnerable to macOS certificate trust-store issues.
-
-2. Implemented SSL robustness in downloader.
-   - Added certifi-based HTTPS opener setup and wrapped `urlretrieve` in `_urlretrieve` with explicit `CERTIFICATE_VERIFY_FAILED` guidance.
-   - Updated downloader call sites to use the wrapper.
-   - Added `certifi` to `requirements.txt`.
-
-3. Collected diagnostics to identify why notebook still did not run.
-   - Global diagnostics reported notebook/runtime blockers:
-     - `Namespace.__init__()` misuse in training path.
-     - Notebook lint warning to prefer `%pip` over `!pip`.
 
 4. Inspected training stack for hard runtime crashes.
    - Read `TrainTools/train.py`, `TrainTools/train_utils.py`, `Losses/loss.py`, schedulers, and data/eval loaders.
@@ -62,7 +45,7 @@ Make the project runnable end-to-end (download/preprocess/train/evaluate paths) 
        - Fixed swapped word/char embedding lookups for context/question.
        - Fixed CQAttention mask argument order.
      - `Models/attention.py`
-       - Fixed C2Q attention batch matmul (`A = torch.bmm(S1, Q)`).
+       - Fixed C2Q attention batch matmul (matmul = matrix multiplication) (`A = torch.bmm(S1, Q)`).
      - `Models/heads.py`
        - Fixed pointer concatenation dim (`dim=1` for both starts/ends).
      - `Models/Normalizations/layernorm.py`
@@ -83,15 +66,8 @@ Make the project runnable end-to-end (download/preprocess/train/evaluate paths) 
 10. Fixed evaluation prediction extraction bug.
     - `EvaluateTools/eval_utils.py`: argmax dimension corrected from `dim=0` to `dim=1` for batch-wise spans.
 
-11. Ran second train smoke test.
-    - Training advanced through step/eval, but checkpoint save failed because scheduler used a local lambda (not picklable).
-
 12. Fixed scheduler serialization compatibility.
     - `Schedulers/scheduler.py`: replaced inline lambda with module-level `_constant_one` function for `lambda`/`none` schedulers.
-
-13. Ran third train smoke test.
-    - Training completed end-to-end and saved checkpoint successfully.
-    - Metrics were finite structure-wise but values were low/`nan` in this 1-step sanity run (expected quality not guaranteed at this stage).
 
 14. Validated evaluate entrypoint and fixed checkpoint loading mismatches.
     - First evaluate smoke test revealed API mismatch in my test call; corrected to `test_num_batches`.
@@ -100,16 +76,6 @@ Make the project runnable end-to-end (download/preprocess/train/evaluate paths) 
       - Load model state from `model_state` with fallback to `model`.
       - Set `torch.load(..., weights_only=False)` for local trusted checkpoint compatibility.
 
-15. Ran final evaluate smoke test.
-    - Evaluation completed without crashing and produced output metrics dict.
-
-## Current status
-- Code now executes through:
-  - data/download setup path,
-  - training entrypoint (including checkpoint save),
-  - evaluation entrypoint (including checkpoint load).
-- Remaining model-quality issue:
-  - very short smoke run still produced `nan` loss values; this does not block execution but indicates additional numerical/debug work is needed for quality/stability tuning.
 
 ## Files changed in Stage 1
 - `Tools/download.py`
@@ -137,10 +103,6 @@ Make the project runnable end-to-end (download/preprocess/train/evaluate paths) 
 
 ## NaN Loss Fix Log (30 March 2026, follow-up)
 
-16. Reproduced NaN-loss behavior after previous Stage 1 fixes.
-    - One-step train smoke test initially produced finite training/eval losses.
-    - Standalone evaluate sometimes still returned `nan` loss depending on checkpoint state.
-
 17. Isolated primary numerical instability source.
     - Inspected custom dropout implementation in `Models/dropout.py`.
     - Found incorrect inverted-dropout scaling:
@@ -154,35 +116,7 @@ Make the project runnable end-to-end (download/preprocess/train/evaluate paths) 
       - return zeros when `keep_prob <= 0.0`
       - scale by `1 / keep_prob`
 
-19. Validated immediate effect on training.
-    - Re-ran one-step training smoke test.
-    - Loss became finite:
-      - train block loss: `482.075500`
-      - train-eval loss: `27.090670`
-      - dev-eval loss: `29.842258`
-
-20. Diagnosed remaining intermittent NaN in standalone evaluate.
-    - Inspected `_model/model.pt` checkpoint content.
-    - Found existing stale checkpoint at `step 400` with many NaN parameters:
-      - `nan_params 19918560 / total 20230560`
-    - Conclusion: evaluate was loading a previously corrupted checkpoint written before dropout fix.
-
-21. Regenerated a clean checkpoint after dropout fix.
-    - Ran one-step train again to overwrite `_model/model.pt`.
-    - Verified checkpoint now clean:
-      - `step 1`
-      - `nan_params 0 / total 20230560`
-
-22. Re-validated standalone evaluate with clean checkpoint.
-    - One-batch evaluate returned finite metrics:
-      - `loss 29.842258`
-      - `f1 5.479452`
-      - `exact_match 0.0`
-
-## Final NaN status
-- Root cause fixed in code (`Models/dropout.py`).
-- Residual NaN observations were due to an old corrupted checkpoint, not current code.
-- After regenerating checkpoint, both train and evaluate produce finite losses in smoke tests.
+Loss is now finite and all the pipeline runs at this point. Not well, but it runs.
 
 ## Additional files changed in follow-up
 - `Models/dropout.py`
