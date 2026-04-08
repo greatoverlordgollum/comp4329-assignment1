@@ -108,7 +108,13 @@ tmp/
 log/
 model/
 _model/
+_model_leaky/
+_model_sgd/
+_model_xavier/
 _log/
+_log_leaky/
+_log_sgd/
+_log_xavier/
 mini_data.zip
 
 # Instructor-only grading materials
