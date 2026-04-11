@@ -1,0 +1,120 @@
+---
+title: "Experiment Results Analysis"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+```{r setup}
+library(tidyverse)
+baseline = read.csv("comp4329baseline.csv")
+q1 = read.csv("comp4329xavierq1.csv")
+q2 = read.csv("comp4329sgdmomentumq2.csv")
+q3 = read.csv("comp4329leakyReLUq3.csv")
+```
+
+# Experiment 1
+
+```{r}
+q1_data = bind_rows(
+  baseline %>% mutate(Dataset = "Kaiming (Baseline)"),
+  q1 %>% mutate(Dataset = "Xavier")
+)
+
+q1_data_long <- q1_data %>%
+  pivot_longer(
+    cols = c("Loss", "F1", "EM"),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+q1_data_long$Step <- as.numeric(q1_data_long$Step)
+
+ggplot(q1_data_long, aes(x = Step, y = Value, color = Dataset, group = Dataset)) +
+  geom_line(size = 1) +
+  # scales = "free_y" is crucial since Loss and F1/EM are on different scales
+  facet_wrap(~Metric, scales = "free_y") + 
+  theme_minimal() +
+  labs(
+    title = "Model Performance Metrics",
+    subtitle = "Xavier vs Kaiming Initialisation",
+    x = "Training Steps",
+    y = "Score / Loss"
+  ) +
+  theme(legend.position = "bottom") + 
+  theme(plot.margin = unit(c(0.5,1,0,1), "cm")) + 
+  theme(text = element_text(family = "CMU Serif"))
+
+ggsave("experiment1.png", width = 9, height = 5)
+```
+
+# Experiment 1
+
+```{r}
+q2_data = bind_rows(
+  baseline %>% mutate(Dataset = "Adam (Baseline)"),
+  q2 %>% mutate(Dataset = "SGD with Momentum")
+)
+
+q2_data_long <- q2_data %>%
+  pivot_longer(
+    cols = c("Loss", "F1", "EM"),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+q2_data_long$Step <- as.numeric(q2_data_long$Step)
+
+ggplot(q2_data_long, aes(x = Step, y = Value, color = Dataset, group = Dataset)) +
+  geom_line(size = 1) +
+  # scales = "free_y" is crucial since Loss and F1/EM are on different scales
+  facet_wrap(~Metric, scales = "free_y") + 
+  theme_minimal() +
+  labs(
+    title = "Model Performance Metrics",
+    subtitle = "Adam vs SGD with Momentum Optimiser",
+    x = "Training Steps",
+    y = "Score / Loss"
+  ) +
+  theme(legend.position = "bottom") + 
+  theme(plot.margin = unit(c(0.5,1,0,1), "cm")) + 
+  theme(text = element_text(family = "CMU Serif"))
+
+ggsave("experiment2.png", width = 9, height = 5)
+```
+
+# Experiment 3
+
+```{r}
+q3_data = bind_rows(
+  baseline %>% mutate(Dataset = "ReLU (Baseline)"),
+  q3 %>% mutate(Dataset = "Leaky ReLU")
+)
+
+q3_data_long <- q3_data %>%
+  pivot_longer(
+    cols = c("Loss", "F1", "EM"),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+q3_data_long$Step <- as.numeric(q3_data_long$Step)
+
+ggplot(q3_data_long, aes(x = Step, y = Value, color = Dataset, group = Dataset)) +
+  geom_line(size = 1) +
+  # scales = "free_y" is crucial since Loss and F1/EM are on different scales
+  facet_wrap(~Metric, scales = "free_y") + 
+  theme_minimal() +
+  labs(
+    title = "Model Performance Metrics",
+    subtitle = "ReLU vs Leaky ReLU Activation Function",
+    x = "Training Steps",
+    y = "Score / Loss"
+  ) +
+  theme(legend.position = "bottom") + 
+  theme(plot.margin = unit(c(0.5,1,0,1), "cm")) + 
+  theme(text = element_text(family = "CMU Serif"))
+
+ggsave("experiment3.png", width = 9, height = 5)
+```
